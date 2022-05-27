@@ -1,0 +1,149 @@
+###### Data Import and Data Preparation
+walmartretail = read.csv("Walmart_Store_sales.csv")
+View(walmartretail)
+str(walmartretail)
+walmartretail$Date =as.Date(walmartretail$Date,format=c("%m/%d/%Y")) 
+
+View(walmartretail)
+str(walmartretail)
+
+######### Which store has maximum sales 
+Store_wise_sales = aggregate(Weekly_Sales~Store,walmartretail,sum)
+Store_wise_sales
+library(dplyr)
+arrange(Store_wise_sales,desc(Weekly_Sales))
+
+
+###Which store has maximum standard deviation i.e the sales vary a lot. 
+######### Also find out coefficient of mean to standard deviation
+Stores_with_mean= aggregate(Weekly_Sales~Store,walmartretail,mean)
+library(plyr)
+Stores_with_mean = rename(Stores_with_mean,c(Weekly_Sales="Mean_Sales"))
+View(Stores_with_mean)
+
+Stores_with_std= aggregate(Weekly_Sales~Store,walmartretail,sd)
+Stores_with_std = rename(Stores_with_std,c(Weekly_Sales="Sd_Sales"))
+View(Stores_with_std)
+
+Stores_with_std_mean = cbind(Stores_with_mean,Stores_with_std)
+View(Stores_with_std_mean)
+
+Stores_with_std_mean_coeff = transform(Stores_with_std_mean,Coeff=(Sd_Sales/Mean_Sales))
+View(Stores_with_std_mean_coeff)
+
+#### Which store/s has good quarterly growth rate in Q3’2012
+Stores_with_Q_Flag = transform(walmartretail,Q_Flag= ifelse((Date>='2012-04-01' & Date<= '2012-06-30'),"Q2_2012",
+                                      ifelse((Date>='2012-07-01' & Date<= '2012-09-30'),"Q3_2012","-")))
+
+# confirming start and end date for each quarter
+aggregate(Date ~ Q_Flag, Stores_with_Q_Flag, min)
+aggregate(Date ~ Q_Flag, Stores_with_Q_Flag, max)
+
+
+# summarizing and then reshaping
+Stores_with_Q_Flag_sum = aggregate(Weekly_Sales~Store+Q_Flag,Stores_with_Q_Flag,sum)
+View(Stores_with_Q_Flag_sum)
+str(Stores_with_Q_Flag_sum)
+
+Stores_with_Q_Flag_sum_t = reshape(Stores_with_Q_Flag_sum,idvar="Store",timevar ='Q_Flag',direction="wide")
+View(Stores_with_Q_Flag_sum_t)
+Stores_with_Q_Flag_sum_t_GR = transform(Stores_with_Q_Flag_sum_t,
+                                GR=((Weekly_Sales.Q3_2012-Weekly_Sales.Q2_2012)/Weekly_Sales.Q2_2012))
+View(Stores_with_Q_Flag_sum_t_GR)
+
+
+####Some holidays have negative impact on sales. Find out holidays which have higher sales than
+            #mean sales in non-holiday season for all stores together
+
+non_holiday_Sales = filter(walmartretail,Holiday_Flag==0)
+View(non_holiday_Sales)
+Avg_non_holiday_Sales = mean(non_holiday_Sales$Weekly_Sales)
+Avg_non_holiday_Sales
+
+Declining_Holiday_Sales = filter(walmartretail,Weekly_Sales>Avg_non_holiday_Sales &  Holiday_Flag==1)
+unique(Declining_Holiday_Sales$Date)
+
+### Provide a monthly and semester view of sales in units and give insights
+View(walmartretail)
+walmartretail_month_year = transform(walmartretail,Year_Sale =as.numeric(format(Date,"%Y"))
+                                     ,Month_Sale =as.numeric(format(Date,"%m")))
+View(walmartretail_month_year)
+
+Summarized_View = aggregate(Weekly_Sales~Month_Sale+Year_Sale,walmartretail_month_year,sum)
+View(Summarized_View)
+
+Insight_data = arrange(Summarized_View,desc(Weekly_Sales))
+View(Insight_data)
+# Insights
+# we had experienced maximum sales in Dec 2010 and post that it was in June 2012. THe company need to adopt marketing strategy similar
+ # to what we did in Dec 2010 to enhance sales.
+
+
+###### Linear Model
+lm_walmart = lm(Weekly_Sales ~ Holiday_Flag + Temperature + Fuel_Price+ CPI + Unemployment , walmartretail)
+summary(lm_walmart)
+### droppping insignificant vars i.e temp and fuel price
+lm_walmart = lm(Weekly_Sales ~ Holiday_Flag + CPI + Unemployment , walmartretail)
+summary(lm_walmart)
+
+###### Time series model
+# visually identifying if data is fit for time series
+walmartretail1 = aggregate(Weekly_Sales~Date,walmartretail,sum)
+View(walmartretail1)
+plot(walmartretail1,type='l')
+class(walmartretail1)
+str(walmartretail1)
+
+#### preparing data for ARIMA model
+walmartretail_month_year = transform(walmartretail,Year_Sale =as.numeric(format(Date,"%Y"))
+                                     ,Month_Sale =as.numeric(format(Date,"%m")))
+View(walmartretail_month_year)
+walmartretail_month_year_filtered = select(walmartretail_month_year,Weekly_Sales,Year_Sale,Month_Sale)
+View(walmartretail_month_year_filtered)
+
+# rolling up sales at month level
+Walmart_Rolledup = aggregate(Weekly_Sales~Year_Sale+Month_Sale,walmartretail_month_year_filtered,sum)
+View(Walmart_Rolledup)
+
+# sorting in year and month order
+Walmart_sorted = arrange(Walmart_Rolledup,Year_Sale,Month_Sale)
+View(Walmart_sorted)
+
+# creating a Column with month and year of sale
+Walmart_TS = transform(Walmart_sorted,Time_Of_Sale = as.Date(paste(Year_Sale,"-",Month_Sale,"-",1,sep=""),
+                                                             format="%Y-%m-%d"))[,c(4,3)]
+
+View(Walmart_TS)
+
+#### Build up ARIMA model to forecast last 6 months i.e as in input utilize only till 
+    # Predict next 6 months i.e June to Oct 2010. Check for MAPE
+# Building ARIMA model
+library(forecast)
+# Walmart_ARIMA = auto.arima(Walmart_TS[1:30,2])
+Walmart_ARIMA = arima(Walmart_TS[1:30,2],order=c(2,1,2))
+Forecasted_Sale = forecast(Walmart_ARIMA,h=6) # forecasting 6 months only
+Forecasted_Sale
+plot(Forecasted_Sale)
+
+# 6 months forecast
+Forecasted_Sales = as.data.frame(Forecasted_Sale)
+Forecasted_Sales_6m = Forecasted_Sales[,1]
+View(Forecasted_Sales_6m)
+
+# 6 m actual
+Actual_Sales_6m = Walmart_TS[31:36,]
+
+# concatenating 6 m forecast and actual
+Actual_vs_Forecst_last_6_m = cbind(Forecasted_Sales_6m,Actual_Sales_6m)
+View(Actual_vs_Forecst_last_6_m)
+Actual_vs_Forecst_last_6_m_deviation = transform(Actual_vs_Forecst_last_6_m, 
+                                  Errors = abs(Forecasted_Sales_6m-Weekly_Sales)/Weekly_Sales)
+View(Actual_vs_Forecst_last_6_m_deviation)
+
+# overall error rate/MAPE. The error terms may be high as for timeseries require atleast last 4
+    # years data. Also in very few observations/months we can see high error rates
+MAPE = mean(Actual_vs_Forecst_last_6_m_deviation$Errors)
+MAPE
+
+
+
